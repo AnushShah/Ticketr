@@ -63,10 +63,18 @@ function canRepeat(){return!!lastTicket()}
 /* ---------- feedback ---------- */
 var actx=null;
 function audio(){try{if(!actx){var C=window.AudioContext||window.webkitAudioContext;if(C)actx=new C()}if(actx&&actx.state==="suspended")actx.resume()}catch(e){}}
-function tone(f,d,when,type){if(!S.opts.sound||!actx||S.opts.vol===0)return;try{var o=actx.createOscillator(),g=actx.createGain();o.type=type||"square";o.frequency.value=f;var v=[0,.03,.06,.1][S.opts.vol];g.gain.value=v;o.connect(g);g.connect(actx.destination);var t=actx.currentTime+(when||0);o.start(t);g.gain.setValueAtTime(v,t+d-.01);g.gain.linearRampToValueAtTime(0,t+d);o.stop(t+d)}catch(e){}}
-function vib(p){if(!S.opts.sound)return;try{if(navigator.vibrate)navigator.vibrate(p)}catch(e){}}
-var fx={tick:function(){vib(8)},press:function(){vib(18);tone(1300,.03)},printed:function(){vib(25);tone(880,.09)},free:function(){vib(25);tone(660,.06);tone(990,.06,.09)},
-  paid:function(){vib([30,50,30]);tone(660,.1);tone(880,.1,.11);tone(1100,.14,.22)},void:function(){vib(60);tone(260,.18)},error:function(){vib([30,40,30,40,30]);tone(240,.14);tone(240,.14,.2)}};
+var lastSnd=0;
+function tone(f,d,when,type,gain){if(!S.opts.sound||!actx||S.opts.vol===0)return;try{var o=actx.createOscillator(),g=actx.createGain(),v=[0,.05,.1,.18][S.opts.vol]*(gain||1),t=actx.currentTime+(when||0),a=Math.min(.012,d/3);o.type=type||"sine";o.frequency.value=f;g.gain.setValueAtTime(0.0001,t);g.gain.linearRampToValueAtTime(v,t+a);g.gain.exponentialRampToValueAtTime(0.0001,t+d);o.connect(g);g.connect(actx.destination);o.start(t);o.stop(t+d+.02)}catch(e){}}
+function vib(p){try{if(navigator.vibrate)navigator.vibrate(p)}catch(e){}}
+/* sounds are gated: soft, one per action, never stacked. Haptics always fire. */
+function snd(fn,force){var n=Date.now();if(!force&&n-lastSnd<120)return;lastSnd=n;fn()}
+var fx={tick:function(){vib(8)},
+  press:function(){vib(18);snd(function(){tone(587,.09,0,"sine",.8)})},
+  printed:function(){vib(25);snd(function(){tone(659,.16,0,"sine",.9)})},
+  free:function(){vib(25);snd(function(){tone(523,.12);tone(784,.2,.09)})},
+  paid:function(){vib([30,50,30]);snd(function(){tone(523,.14);tone(659,.14,.1);tone(784,.28,.2)})},
+  void:function(){vib(60);snd(function(){tone(440,.12,0,"sine",.8);tone(349,.2,.1,"sine",.8)})},
+  error:function(){vib([30,40,30,40,30]);snd(function(){tone(311,.16,0,"triangle",.7);tone(262,.24,.14,"triangle",.7)},true)}};
 
 /* ---------- state actions ---------- */
 function resetRush(){S.rush.on=false;S.rush.n=1;S.rush.who="ad";S.rush.pop=false}
@@ -103,7 +111,7 @@ function startPrint(t){
   setTimeout(function(){
     if(t.status!=="printing")return;
     if(!S.opts.paper){t.status="fault";fx.error();renderStrip();return}
-    t.status="printed";addSlip(t);if(t.mode==="free")fx.free();else fx.printed();renderStrip();
+    t.status="printed";addSlip(t);vib(25);renderStrip();
   },at-Date.now());
 }
 function retry(){
@@ -353,6 +361,7 @@ function drawOverlay(){
       '<button class="mi" data-a="report" data-tap><span>Collection report</span><span>'+RTI+'</span></button>'+
       '<button class="mi" data-a="tickets" data-tap><span>Issued tickets</span><span>'+(S.unsynced>0?'<small style="font-size:13px;color:var(--k-fg-7a4100);margin-right:8px">'+S.unsynced+" to sync</small>":"")+RTI+'</span></button>'+
       '<button class="mi" data-a="night" data-tap role="switch" aria-checked="'+(S.opts.night?"true":"false")+'"><span>Night mode</span><span class="sw'+(S.opts.night?" on":"")+'"><i></i></span></button>'+
+      '<button class="mi" data-a="sound" data-tap role="switch" aria-checked="'+(S.opts.sound?"true":"false")+'"><span>Sound</span><span class="sw'+(S.opts.sound?" on":"")+'"><i></i></span></button>'+
       '<div style="height:18px"></div>'+
       '<button class="mi dg" data-a="endtrip" data-tap><span>End trip</span><span>'+RTI+'</span></button>'+
       '<button class="mi dg" data-a="endduty" data-tap><span>End duty</span><span>'+RTI+'</span></button></div></div>';
@@ -571,7 +580,7 @@ scr.addEventListener("click",function(e){
     case"voidtap":{var l2=lastTicket();if(l2){S.overlay={type:"tkt",id:l2.id};renderOverlay()}break}
     case"reprint":{var tr=byId(id);if(!tr)break;S.overlay=null;if(!S.opts.paper){fx.error();S.flash={text:"Out of paper",sub:"Reprint of #"+pad(tr.id)+" not printed",until:Date.now()+2800}}else{fx.printed();S.flash={text:"Reprint #"+pad(tr.id),sub:"Duplicate copy printing",until:Date.now()+2000};addSlip(tr,true)}render();setTimeout(renderStrip,2900);break}
     case"dovoid":{var l3=lastTicket();if(l3&&l3.id===id&&l3.mode!=="upi"){l3.status="voided";fx.void();slipText("** VOID **  #"+pad(l3.id)+"\n"+no(l3.destIdx)+"-"+l3.dest+"   ₹"+l3.amount+"\n"+nowStr());S.flash={text:"Voided #"+pad(l3.id),sub:"Logged. Take back the ticket.",until:Date.now()+1800}}S.overlay=null;render();setTimeout(renderStrip,1900);break}
-    case"menu":S.overlay={type:"menu"};renderOverlay();break;case"night":S.opts.night=!S.opts.night;applyNight();renderOverlay();fx.press();break;
+    case"menu":S.overlay={type:"menu"};renderOverlay();break;case"night":S.opts.night=!S.opts.night;applyNight();renderOverlay();fx.press();break;case"sound":S.opts.sound=!S.opts.sound;try{localStorage.setItem("ticketr.sound",S.opts.sound?"1":"0")}catch(e){}renderOverlay();fx.press();break;
     case"report":S.overlay={type:"report"};renderOverlay();break;
     case"volm":S.opts.vol=Math.max(0,S.opts.vol-1);renderOverlay();fx.press();break;
     case"volp":S.opts.vol=Math.min(3,S.opts.vol+1);renderOverlay();fx.press();break;
@@ -627,6 +636,7 @@ setInterval(function(){if(S.screen==="core")renderStatus()},20000);
 function nightClass(){$("scr").classList.toggle("night",!!S.opts.night)}
 function applyNight(){nightClass();try{localStorage.setItem("ticketr.night",S.opts.night?"1":"0")}catch(e){}}
 (function(){var v=null;try{v=localStorage.getItem("ticketr.night")}catch(e){}S.opts.night=v!==null?v==="1":!!(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)})();
+(function(){var v=null;try{v=localStorage.getItem("ticketr.sound")}catch(e){}if(v!==null)S.opts.sound=v==="1"})();
 S.trip={n:1,dir:"Up"};
 render();
 })();
