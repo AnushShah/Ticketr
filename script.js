@@ -63,18 +63,35 @@ function canRepeat(){return!!lastTicket()}
 /* ---------- feedback ---------- */
 var actx=null;
 function audio(){try{if(!actx){var C=window.AudioContext||window.webkitAudioContext;if(C)actx=new C()}if(actx&&actx.state==="suspended")actx.resume()}catch(e){}}
-var lastSnd=0;
-function tone(f,d,when,type,gain){if(!S.opts.sound||!actx||S.opts.vol===0)return;try{var o=actx.createOscillator(),g=actx.createGain(),v=[0,.05,.1,.16][S.opts.vol]*(gain||1),t=actx.currentTime+(when||0),a=Math.min(.025,d/3);o.type=type||"sine";o.frequency.value=f;g.gain.setValueAtTime(0.0001,t);g.gain.linearRampToValueAtTime(v,t+a);g.gain.exponentialRampToValueAtTime(0.0001,t+d);o.connect(g);g.connect(actx.destination);o.start(t);o.stop(t+d+.02)}catch(e){}}
+var lastSnd=0,noiseBuf=null;
+function lvl(){return[0,.04,.08,.14][S.opts.vol]}
+/* soft pitched pop: a sine with a quick pitch glide, an optional glassy octave overtone, low-passed so it never gets sharp */
+function blip(f0,f1,d,gain,when,glass){if(!S.opts.sound||!actx||S.opts.vol===0)return;try{
+  var t=actx.currentTime+(when||0),g=actx.createGain(),lp=actx.createBiquadFilter();
+  lp.type="lowpass";lp.frequency.value=5200;lp.Q.value=.5;
+  g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(lvl()*(gain||1),t+.004);g.gain.exponentialRampToValueAtTime(.0001,t+d);
+  g.connect(lp);lp.connect(actx.destination);
+  [[1,1],[2,glass?.2:0]].forEach(function(p){if(!p[1])return;var o=actx.createOscillator(),og=actx.createGain();
+    o.type="sine";o.frequency.setValueAtTime(f0*p[0],t);if(f1!==f0)o.frequency.exponentialRampToValueAtTime(f1*p[0],t+d*.7);
+    og.gain.value=p[1];o.connect(og);og.connect(g);o.start(t);o.stop(t+d+.02)})}catch(e){}}
+/* tiny filtered-noise transient: the tactile "tap" under a blip */
+function snap(when,gain,freq){if(!S.opts.sound||!actx||S.opts.vol===0)return;try{
+  if(!noiseBuf){var n=Math.floor(actx.sampleRate*.03),b=actx.createBuffer(1,n,actx.sampleRate),d=b.getChannelData(0);for(var i=0;i<n;i++)d[i]=Math.random()*2-1;noiseBuf=b}
+  var t=actx.currentTime+(when||0),src=actx.createBufferSource(),f=actx.createBiquadFilter(),g=actx.createGain();
+  src.buffer=noiseBuf;f.type="bandpass";f.frequency.value=freq||3000;f.Q.value=1.1;
+  g.gain.setValueAtTime(lvl()*(gain||1),t);g.gain.exponentialRampToValueAtTime(.0001,t+.014);
+  src.connect(f);f.connect(g);g.connect(actx.destination);src.start(t);src.stop(t+.03)}catch(e){}}
 function vib(p){try{if(navigator.vibrate)navigator.vibrate(p)}catch(e){}}
 /* sounds are gated: soft, one per action, never stacked. Haptics always fire. */
 function snd(fn,force){var n=Date.now();if(!force&&n-lastSnd<150)return;lastSnd=n;fn()}
 var fx={tick:function(){vib(8)},
-  press:function(){vib(18);snd(function(){tone(440,.22,0,"sine",.7)})},
-  printed:function(){vib(25);snd(function(){tone(494,.25,0,"sine",.6)})},
-  free:function(){vib(25);snd(function(){tone(440,.2,0,"sine",.65);tone(587,.28,.12,"sine",.65)})},
-  paid:function(){vib([30,50,30]);snd(function(){tone(440,.2,0,"sine",.65);tone(587,.34,.14,"sine",.65)})},
-  void:function(){vib(60);snd(function(){tone(392,.2,0,"sine",.6);tone(311,.3,.14,"sine",.6)})},
-  error:function(){vib([30,40,30,40,30]);snd(function(){tone(349,.22,0,"sine",.7);tone(294,.3,.18,"sine",.7)},true)}};
+  /* short, soft, tactile: every sound is under ~0.3 s */
+  press:function(){vib(18);snd(function(){snap(0,1.4,2600);blip(760,430,.075,.9)})},
+  printed:function(){vib(25);snd(function(){snap(0,1,4200);blip(1250,1560,.07,.55)})},
+  free:function(){vib(25);snd(function(){snap(0,1,3200);blip(880,880,.1,.7,0,1);blip(1320,1320,.14,.7,.075,1)})},
+  paid:function(){vib([30,50,30]);snd(function(){snap(0,1,3600);blip(1047,1047,.11,.7,0,1);blip(1568,1568,.2,.75,.085,1)})},
+  void:function(){vib(60);snd(function(){snap(0,1,1800);blip(640,330,.13,.8)})},
+  error:function(){vib([30,40,30,40,30]);snd(function(){snap(0,1.2,1500);blip(300,210,.1,1);snap(.12,1.2,1500);blip(300,210,.1,1,.12)},true)}};
 
 /* ---------- state actions ---------- */
 function resetRush(){S.rush.on=false;S.rush.n=1;S.rush.who="ad";S.rush.pop=false}
